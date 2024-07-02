@@ -1,30 +1,23 @@
+// authServer.test.js
 import request from "supertest";
-import mongoose from "mongoose";
-import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
-import app from "../authServer/authServer"; // Import the Express app
-
+import { app, redisClient, mongoose } from "../authServer/authServer";
+import { connectDB, connectRedis } from "../db/db.js";
 import dotenv from "dotenv";
 dotenv.config();
 
-console.log("MongoDB URI:", process.env.MONGO_URI);
-
-// MongoDB connection setup for testing
 beforeAll(async () => {
-  await mongoose.connect(process.env.MONGO_URI, {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-  });
-  console.log("MongoDB connected");
-});
-
-beforeEach(async () => {
-  await mongoose.connection.db.dropDatabase();
+  await connectDB();
+  await connectRedis();
+  console.log("MongoDB and Redis connected");
 });
 
 afterAll(async () => {
-  await mongoose.connection.close();
-  console.log("MongoDB disconnected");
+  await mongoose.connection.db.dropDatabase();
+  await mongoose.disconnect();
+  await redisClient.flushAll();
+  await redisClient.quit();
+  console.log("All connections disconnected");
 });
 
 describe("Authentication endpoints", () => {
@@ -38,6 +31,14 @@ describe("Authentication endpoints", () => {
     expect(res.status).toBe(201);
   });
 
+  it("should fail registration with missing fields", async () => {
+    const res = await request(app)
+      .post("/register")
+      .send({ username: "testuser2" });
+    console.log("Register User with Missing Fields Response:", res.body);
+    expect(res.status).toBe(400);
+  });
+
   it("should login with the registered user", async () => {
     const res = await request(app)
       .post("/login")
@@ -46,6 +47,14 @@ describe("Authentication endpoints", () => {
     expect(res.status).toBe(200);
     expect(res.body.token).toBeDefined();
     token = res.body.token;
+  });
+
+  it("should fail login with missing fields", async () => {
+    const res = await request(app)
+      .post("/login")
+      .send({ username: "testuser" });
+    console.log("Login with Missing Fields Response:", res.body);
+    expect(res.status).toBe(400);
   });
 
   it("should fail login with incorrect password", async () => {
@@ -81,6 +90,40 @@ describe("Authentication endpoints", () => {
       "Access Protected Route with Invalid Token Response:",
       res.body
     );
-    expect(res.status).toBe(401); // Adjusted to expect 401 for invalid token
+    expect(res.status).toBe(401);
+  });
+
+  it("should fail to enqueue task without token", async () => {
+    const res = await request(app)
+      .post("/enqueue")
+      .send({ task: "sample task" });
+    console.log("Enqueue Task without Token Response:", res.body);
+    expect(res.status).toBe(401);
+  });
+
+  it("should fail to enqueue task with invalid token", async () => {
+    const res = await request(app)
+      .post("/enqueue")
+      .set("Authorization", "Bearer invalidtoken")
+      .send({ task: "sample task" });
+    console.log("Enqueue Task with Invalid Token Response:", res.body);
+    expect(res.status).toBe(401);
+  });
+
+  it("should enqueue task with valid token", async () => {
+    const res = await request(app)
+      .post("/enqueue")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ task: "sample task" });
+    console.log("Enqueue Task Response:", res.body);
+    expect(res.status).toBe(200);
+    expect(res.body.message).toBe("Task added to queue");
+  });
+
+  it("should process tasks from the queue", async () => {
+    const userId = jwt.decode(token).id;
+    const queueName = `queue_${userId}`;
+    const task = await redisClient.lPop(queueName);
+    expect(task).toBe(JSON.stringify("sample task"));
   });
 });
