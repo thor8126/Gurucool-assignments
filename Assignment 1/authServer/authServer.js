@@ -3,6 +3,7 @@ import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import bodyParser from "body-parser";
 import mongoose from "mongoose";
+import { createClient } from "redis";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -10,10 +11,34 @@ dotenv.config();
 const app = express();
 app.use(bodyParser.json());
 
-mongoose.connect(process.env.MONGO_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
+const redisClient = createClient({
+  password: process.env.REDIS_PASSWORD,
+  socket: {
+    host: process.env.REDIS_HOST,
+    port: process.env.REDIS_PORT,
+  },
 });
+
+redisClient.connect().catch(console.error);
+
+console.log("Loaded environment variables:", process.env);
+console.log("Mongo URI:", process.env.MONGO_URI);
+
+async function db() {
+  try {
+    await mongoose.connect(process.env.MONGO_URI, {
+      maxPoolSize: 50,
+      useNewUrlParser: true,
+      useUnifiedTopology: true, // Add this option for MongoDB connection
+    });
+    console.log("Connected to MongoDB");
+  } catch (err) {
+    console.error(err);
+    throw err;
+  }
+}
+
+db();
 
 const UserSchema = new mongoose.Schema({
   username: String,
@@ -45,6 +70,33 @@ app.post("/login", async (req, res) => {
   } else {
     res.sendStatus(401);
   }
+});
+
+// Middleware to check the token
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers["authorization"];
+  const token = authHeader && authHeader.split(" ")[1];
+  if (token == null) return res.sendStatus(401);
+
+  jwt.verify(token, secret, (err, user) => {
+    if (err) return res.sendStatus(401);
+    req.user = user;
+    next();
+  });
+};
+
+// Endpoint to add tasks to the queue
+app.post("/enqueue", authenticateToken, async (req, res) => {
+  const { task } = req.body;
+  const userId = req.user.id;
+  const queueName = `queue_${userId}`;
+  await redisClient.rPush(queueName, JSON.stringify(task));
+  res.json({ message: "Task added to queue" });
+});
+
+// Protected route
+app.get("/protected-route", authenticateToken, (req, res) => {
+  res.json({ message: "Access granted" });
 });
 
 export default app;
