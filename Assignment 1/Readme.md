@@ -1,69 +1,109 @@
-**Flow Distribution Algorithm: Design and Implementation**
+## Authentication Service with Task Queue and Monitoring
 
-The flow distribution algorithm in this system efficiently manages task assignments for users. It leverages both MongoDB for persistent user data storage and Redis for real-time task queuing.
+### Overview
 
-**Design Principles:**
+This project implements a secure authentication server with task queuing capabilities, leveraging:
 
-1. **Scalability:** The design allows the system to handle a growing number of users and tasks gracefully. Redis, an in-memory data store, is optimized for fast queue operations, ensuring efficient task distribution.
+- **Express.js:** Web framework for building RESTful APIs.
+- **MongoDB:** Database for storing user credentials (username/password).
+- **Redis:** In-memory data store for user-specific task queues.
+- **Prom-Client:** Library for exposing Prometheus metrics for monitoring.
+- **Bcrypt:** For securely hashing passwords.
+- **JSON Web Tokens (JWT):** For secure user authentication and authorization.
+- **Winston:** Logging library.
 
-2. **Isolation:** Each user has a dedicated queue (`queue_[userId]`) in Redis. This isolation prevents task conflicts and ensures that tasks are processed in the order they are submitted for each user.
+### System Architecture Diagram
 
-3. **Authentication and Authorization:** The system incorporates JWT (JSON Web Token) authentication to secure task submission and access to protected routes. Only authenticated users can enqueue tasks or access protected resources.
+```
++-------------------+  +-------------------+   +-------------------+
+| Authentication    |  |      Redis        |   |      MongoDB      |
+| Server           |->| (Task Queues)      |   | (User Credentials) |
+| (authServer.js)  |  +-------------------+   +-------------------+
++-------------------+
+      |
+      v
++-------------------+
+|   Prometheus      |
+| (Metrics Scraping)|
++-------------------+
+```
 
-4. **Persistence:** MongoDB stores user credentials securely, ensuring that user accounts and authentication information are persistent.
+### Workflow
 
-5. **Flexibility:** The task payload (the `task` object sent in the request) can be customized to include various data types and structures depending on your application's requirements. This allows for flexibility in the types of tasks you can handle.
+1. **User Registration:**
 
-**Algorithm Logic:**
+   - The user submits a username and password to `/register`.
+   - The password is hashed using Bcrypt.
+   - The user data is stored in MongoDB.
 
-1. **User Registration and Login:**
+2. **User Login:**
 
-   - Users register by providing a username and password, which are hashed and stored in MongoDB.
-   - Upon successful login, a JWT is generated and sent to the user.
+   - The user provides credentials to `/login`.
+   - The server verifies the password against the stored hash.
+   - If successful, a JWT is generated and returned to the user.
 
-2. **Task Enqueuing (`/enqueue` endpoint):**
+3. **Task Enqueuing (Authenticated):**
 
-   - The client sends a POST request to `/enqueue` with a JSON body containing the `task` object and includes the JWT in the `Authorization` header.
-   - The server verifies the token to authenticate the user.
-   - The server extracts the `userId` from the token.
-   - The task is serialized (converted to JSON) and pushed onto the user's dedicated queue (`queue_[userId]`) in Redis.
+   - Authenticated users send tasks to `/enqueue`.
+   - The task is added to the user's specific Redis queue (`queue_<userId>`).
 
-3. **Task Processing (Not shown in code):**
+4. **Task Processing (Not Implemented):**
 
-   - In a separate process (not shown in the provided code), you would typically have a worker or consumer that continuously polls Redis queues for tasks.
-   - The worker pops a task from the queue, processes it according to your application's logic, and then moves on to the next task.
+   - (To be added) A separate worker process would continuously poll Redis queues and process tasks.
 
-4. **Protected Route (`/protected-route` endpoint):**
-   - This endpoint demonstrates how you can protect resources using the `authenticateToken` middleware.
-   - Only requests with a valid JWT in the `Authorization` header can access this route.
+5. **Protected Route Access (Authenticated):**
 
-**API Endpoints:**
+   - The `/protected-route` is accessible only with a valid JWT.
 
-| Endpoint           | Method | Description                                   | Authentication |
-| ------------------ | ------ | --------------------------------------------- | -------------- |
-| `/register`        | POST   | Registers a new user.                         | No             |
-| `/login`           | POST   | Authenticates a user and returns a JWT.       | No             |
-| `/enqueue`         | POST   | Adds a task to the user's queue.              | Yes (JWT)      |
-| `/protected-route` | GET    | A protected route accessible only with a JWT. | Yes (JWT)      |
+6. **Prometheus Metrics:**
+   - The `/metrics` endpoint exposes data for monitoring:
+     - HTTP request totals (by method, route, status code)
+     - HTTP request durations (histogram)
+     - Default Node.js process metrics
 
-**Interacting with the API:**
+### Code Structure (authServer.js)
 
-1. **Registration:** Send a POST request to `/register` with `username` and `password` in the request body.
+1. **Imports and Setup:**
 
-2. **Login:** Send a POST request to `/login` with `username` and `password`. Receive a JWT in the response.
+   - Import modules, configure Prometheus, initialize Express, and set up middleware.
 
-3. **Enqueue Task:** Send a POST request to `/enqueue` with the `task` object in the body and include the JWT in the `Authorization` header:
+2. **Metrics Endpoint:**
 
-   ```
-   Authorization: Bearer <your_jwt_token>
-   ```
+   - Handles requests for Prometheus metrics.
 
-4. **Access Protected Route:** Send a GET request to `/protected-route` with the JWT in the `Authorization` header.
+3. **Authentication Endpoints:**
 
-**Key Considerations:**
+   - `POST /register`: Registers a new user.
+   - `POST /login`: Authenticates users and provides JWTs.
 
-- **Error Handling:** Implement robust error handling to manage cases like invalid tokens, database errors, and Redis failures.
+4. **Authentication Middleware:**
 
-- **Queue Management:** Develop your task processing logic to efficiently handle tasks dequeued from Redis.
+   - Protects routes requiring authentication.
 
-- **Security:** Always prioritize security best practices to protect user data and prevent unauthorized access. Consider implementing HTTPS for secure communication.
+5. **Task Enqueuing Endpoint:**
+
+   - `POST /enqueue`: Adds tasks to a user's queue.
+
+6. **Protected Route:**
+   - Demonstrates access control using JWTs.
+
+### Test Suite (authServer.test.js)
+
+- Uses Supertest for end-to-end testing.
+- Covers registration, login, enqueuing, protected route access, and metrics endpoint.
+- Includes database setup and teardown.
+
+### Logging (logger.js)
+
+- Uses Winston for structured logging to the console and a file.
+- Custom log format for clarity.
+
+### Enhancements (Future Work)
+
+1. **Task Worker:** Implement a worker process for task processing.
+2. **Security:** Add HTTPS, input validation, and potentially rate limiting.
+3. **Error Handling:** Improve error handling in routes.
+4. **API Documentation:** Use a tool like Swagger or OpenAPI to create interactive API documentation.
+5. **More Metrics:** Track additional metrics like queue size, task processing time, etc.
+
+Let me know if you'd like any part of this documentation elaborated further or if you have other questions!

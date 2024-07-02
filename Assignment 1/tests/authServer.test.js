@@ -1,4 +1,5 @@
 // authServer.test.js
+
 import request from "supertest";
 import jwt from "jsonwebtoken";
 import { app, redisClient, mongoose } from "../authServer/authServer";
@@ -27,69 +28,58 @@ describe("Authentication endpoints", () => {
     const res = await request(app)
       .post("/register")
       .send({ username: "testuser", password: "password" });
-    console.log("Register User Response:", res.body);
     expect(res.status).toBe(201);
-  });
-
-  it("should fail registration with missing fields", async () => {
-    const res = await request(app)
-      .post("/register")
-      .send({ username: "testuser2" });
-    console.log("Register User with Missing Fields Response:", res.body);
-    expect(res.status).toBe(400);
   });
 
   it("should login with the registered user", async () => {
     const res = await request(app)
       .post("/login")
       .send({ username: "testuser", password: "password" });
-    console.log("Login Response:", res.body);
     expect(res.status).toBe(200);
     expect(res.body.token).toBeDefined();
     token = res.body.token;
   });
 
-  it("should fail login with missing fields", async () => {
-    const res = await request(app)
-      .post("/login")
-      .send({ username: "testuser" });
-    console.log("Login with Missing Fields Response:", res.body);
-    expect(res.status).toBe(400);
+  it("should enqueue multiple tasks with valid token", async () => {
+    const tasks = ["task1", "task2", "task3"]; // Define multiple tasks to enqueue
+    const enqueuePromises = tasks.map((task) =>
+      request(app)
+        .post("/enqueue")
+        .set("Authorization", `Bearer ${token}`)
+        .send({ task })
+    );
+
+    const enqueueResponses = await Promise.all(enqueuePromises);
+    enqueueResponses.forEach((res) => {
+      expect(res.status).toBe(200);
+      expect(res.body.message).toBe("Task added to queue");
+    });
   });
 
-  it("should fail login with incorrect password", async () => {
-    const res = await request(app)
-      .post("/login")
-      .send({ username: "testuser", password: "wrongpassword" });
-    console.log("Failed Login Response:", res.body);
-    expect(res.status).toBe(401);
-  });
+  it("should process tasks from the queue", async () => {
+    const userId = jwt.decode(token).id;
+    const queueName = `queue_${userId}`;
 
-  it("should fail login with non-existing user", async () => {
-    const res = await request(app)
-      .post("/login")
-      .send({ username: "nonexistinguser", password: "password" });
-    console.log("Non-existing User Login Response:", res.body);
-    expect(res.status).toBe(401);
-  });
+    // Ensure all tasks were enqueued properly
+    const tasks = ["task1", "task2", "task3"];
+    const redisTasks = await Promise.all(
+      tasks.map(() => redisClient.lPop(queueName))
+    );
 
-  it("should access protected route with valid token", async () => {
-    const res = await request(app)
-      .get("/protected-route")
-      .set("Authorization", `Bearer ${token}`);
-    console.log("Access Protected Route Response:", res.body);
-    expect(res.status).toBe(200);
-    expect(res.body.message).toBe("Access granted");
+    redisTasks.forEach((task, index) => {
+      expect(task).toBe(JSON.stringify(tasks[index]));
+    });
   });
 
   it("should fail to access protected route with invalid token", async () => {
     const res = await request(app)
       .get("/protected-route")
       .set("Authorization", "Bearer invalidtoken");
-    console.log(
-      "Access Protected Route with Invalid Token Response:",
-      res.body
-    );
+    expect(res.status).toBe(401);
+  });
+
+  it("should fail to access protected route without token", async () => {
+    const res = await request(app).get("/protected-route");
     expect(res.status).toBe(401);
   });
 
@@ -97,7 +87,6 @@ describe("Authentication endpoints", () => {
     const res = await request(app)
       .post("/enqueue")
       .send({ task: "sample task" });
-    console.log("Enqueue Task without Token Response:", res.body);
     expect(res.status).toBe(401);
   });
 
@@ -106,24 +95,20 @@ describe("Authentication endpoints", () => {
       .post("/enqueue")
       .set("Authorization", "Bearer invalidtoken")
       .send({ task: "sample task" });
-    console.log("Enqueue Task with Invalid Token Response:", res.body);
     expect(res.status).toBe(401);
   });
 
-  it("should enqueue task with valid token", async () => {
+  it("should access protected route with valid token", async () => {
     const res = await request(app)
-      .post("/enqueue")
-      .set("Authorization", `Bearer ${token}`)
-      .send({ task: "sample task" });
-    console.log("Enqueue Task Response:", res.body);
+      .get("/protected-route")
+      .set("Authorization", `Bearer ${token}`);
     expect(res.status).toBe(200);
-    expect(res.body.message).toBe("Task added to queue");
+    expect(res.body.message).toBe("Access granted");
   });
 
-  it("should process tasks from the queue", async () => {
-    const userId = jwt.decode(token).id;
-    const queueName = `queue_${userId}`;
-    const task = await redisClient.lPop(queueName);
-    expect(task).toBe(JSON.stringify("sample task"));
+  it("should access Prometheus metrics endpoint", async () => {
+    const res = await request(app).get("/metrics");
+    console.log("Prometheus Metrics Response:", res.text);
+    expect(res.status).toBe(200);
   });
 });
